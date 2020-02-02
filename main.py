@@ -4,6 +4,7 @@ import torch
 import torch.utils.data
 from torch import nn, optim
 from torch.nn import functional as F
+import torch.distributions as dist
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 from vae import VAE, VAEDist
@@ -41,7 +42,7 @@ torch.manual_seed(args.seed)
 
 device = torch.device("cuda" if args.cuda else "cpu")
 
-kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+kwargs = {'num_workers': 8, 'pin_memory': True} if args.cuda else {}
 train_loader = torch.utils.data.DataLoader(datasets.MNIST(
     './data', train=True, download=True, transform=transforms.ToTensor()),
                                            batch_size=args.batch_size,
@@ -67,7 +68,16 @@ def loss_function(recon_x, x, mu, logvar):
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-    return BCE + KLD
+    enc_dist = dist.multivariate_normal.MultivariateNormal(
+        mu, torch.diag_embed(logvar.exp()))
+    unit_mu = torch.zeros(mu.shape).to(mu.device)
+    unit_conv_mat = torch.diag_embed(
+        torch.ones(mu.shape).to(mu.device))
+    prior = dist.multivariate_normal.MultivariateNormal(unit_mu, unit_conv_mat)
+    kl_div = dist.kl_divergence(enc_dist, prior).sum()
+    # print('(KLD, kl_div)', (KLD.item(), kl_div.item()))
+
+    return BCE + kl_div
 
 
 def train(epoch):
